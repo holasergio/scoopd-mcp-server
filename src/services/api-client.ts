@@ -35,10 +35,11 @@ export async function getUserProfile(): Promise<UserProfile> {
 }
 
 export async function startAnalysis(handle: string, reels?: number): Promise<{ jobId: string }> {
-  return request<{ jobId: string }>("POST", "/api/analyze", {
+  const res = await request<{ job_id?: string; jobId?: string }>("POST", "/api/analyze", {
     handle: handle.replace("@", ""),
     max_reels: reels ?? 30,
   });
+  return { jobId: res.job_id || res.jobId || "" };
 }
 
 export async function getJobStatus(jobId: string): Promise<ScoopdJob> {
