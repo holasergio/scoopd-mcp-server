@@ -1,0 +1,51 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: TypeScript typecheck
+        run: npx tsc --noEmit
+
+      - name: Build
+        run: npm run build
+
+      - name: Verify dist artifacts
+        run: |
+          test -f dist/index.js || (echo "::error::dist/index.js missing"; exit 1)
+          test -f dist/services/oauth-store.js || (echo "::error::oauth-store missing"; exit 1)
+          test -f dist/middleware/rate-limit.js || (echo "::error::rate-limit missing"; exit 1)
+          echo "All dist artifacts present"
+
+      - name: Smoke test (server boots + oauth metadata works)
+        run: |
+          PORT=43199 TRANSPORT=http node dist/index.js &
+          PID=$!
+          sleep 2
+          # /health должен ответить 200 OK
+          curl -fsS http://127.0.0.1:43199/health | grep '"status":"ok"' || (kill $PID; exit 1)
+          # OAuth discovery должен показать issuer
+          curl -fsS http://127.0.0.1:43199/.well-known/oauth-authorization-server | grep mcp.scoopd.pro || (kill $PID; exit 1)
+          curl -fsS http://127.0.0.1:43199/.well-known/oauth-protected-resource | grep mcp.scoopd.pro || (kill $PID; exit 1)
+          # /mcp без Bearer — 401 + WWW-Authenticate
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" -X POST http://127.0.0.1:43199/mcp -H "Content-Type: application/json" -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}')
+          [ "$STATUS" = "401" ] || (echo "::error::Expected 401 without Bearer, got $STATUS"; kill $PID; exit 1)
+          kill $PID
+          echo "Smoke test passed"
